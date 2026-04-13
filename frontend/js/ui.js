@@ -254,6 +254,23 @@ async function showResults(results) {
 
     celebrate();
 
+    // Launch fitness chatbot with user's scan profile
+    if (window.initChatbot) {
+      window.initChatbot({
+        height: height,
+        weight: weight,
+        bmi: bmi,
+        age: age,
+        gender: gender,
+        tdee: tdee,
+        bodyType: bodyType,
+        confidence: confidence,
+        diet: _lastDiet,
+        refHeight: ref ? ref.avgHeight : null,
+        refWeight: ref ? ref.avgWeight : null,
+      });
+    }
+
   } catch (err) {
     if (err.message === "REVEAL_CANCELLED") {
       console.log("⏸ [REVEAL] Overridden by new scan. Halting previous process.");
