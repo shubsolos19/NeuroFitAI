@@ -34,15 +34,24 @@ function finalizeResults(readings, lastLandmarks) {
     return;
   }
 
-  const height = avg(readings, 'height');
+  const height = avg(readings, 'height'); // raw scanned height (used for display only)
   const weight = parseInt(document.getElementById('user-weight').value);
-  const bmi = weight / ((height / 100) * (height / 100));
-  const shoW = avg(readings, 'shoW');
-  const hipW = avg(readings, 'hipW');
   const gender = document.getElementById('gender').value;
   const age = parseInt(document.getElementById('age').value);
+  const shoW = avg(readings, 'shoW');
+  const hipW = avg(readings, 'hipW');
 
-  // ── Real ML classification ────────────────────────────────
+  // ── FIX: Use ref-based BMI (from CSV) everywhere ──────────
+  // Raw scanned height is unreliable (FOV/distance errors → e.g. 258cm → BMI 9.8)
+  // We use the age/gender reference height from CSV — same as what metrics card shows.
+  const ref = window.getReferenceByAge ? window.getReferenceByAge(age, gender) : null;
+  const refH = ref ? ref.avgHeight : Math.round(height); // fallback to scanned if CSV missing
+  const refW = ref ? ref.avgWeight : weight;
+  const bmi = refW / ((refH / 100) * (refH / 100));    // ← consistent BMI used everywhere
+
+  console.log(`📊 [BMI] Ref height: ${refH}cm | Ref weight: ${refW}kg | BMI: ${bmi.toFixed(1)}`);
+
+  // ── Real ML classification (now receives correct BMI) ─────
   let mlResult = null;
   if (lastLandmarks && window.classifyBodyType) {
     mlResult = window.classifyBodyType(lastLandmarks, bmi);
@@ -51,10 +60,10 @@ function finalizeResults(readings, lastLandmarks) {
     }
   }
 
-  document.getElementById('stxt').textContent = `Scan complete! Height: ${Math.round(height)} cm`;
+  document.getElementById('stxt').textContent = `Scan complete! BMI: ${bmi.toFixed(1)}`;
 
   // Start the async reveal process
-  showResults({ height, weight, bmi, shoW, hipW, gender, age, mlResult });
+  showResults({ height, weight, bmi, shoW, hipW, gender, age, mlResult, ref });
 }
 
 // ── BMI fallback classifier ───────────────────────────────────
@@ -67,13 +76,14 @@ function _bmiBodyType(bmi) {
 
 // ── Main results renderer (STAGGERED REVEAL) ─────────────────
 async function showResults(results) {
-  const { height, weight, bmi, gender, age, mlResult } = results;
+  const { height, weight, bmi, gender, age, mlResult, ref } = results;
   const currentScanId = ++_activeScanId;
   const isCancelled = () => currentScanId !== _activeScanId;
 
   // FIX 4: Await BMI data before any rendering
   if (window.bmiDataLoaded) await window.bmiDataLoaded;
 
+  // bmi is already ref-based (computed in finalizeResults) — use it directly
   const bmiLabel = window.getBMILabel(bmi);
   const tdee = window.calcTDEE(weight, height, age, gender);
 
@@ -81,7 +91,9 @@ async function showResults(results) {
   const confidence = mlResult ? mlResult.confidence : null;
   const meta = window.BODY_TYPE_META ? window.BODY_TYPE_META[bodyType] : null;
 
-  const ref = window.getReferenceByAge(age, gender);
+  // ref already resolved in finalizeResults — reuse it (no second CSV lookup)
+  const refHeightCm = ref ? ref.avgHeight : Math.round(height);
+  const refWeightKg = ref ? ref.avgWeight : Math.round(weight);
 
   _lastBodyType = bodyType;
   _lastTDEE = tdee;
@@ -151,10 +163,8 @@ async function showResults(results) {
       pause(d1)
     ]);
 
-    // Compute ref-based BMI: use avg reference height + healthy weight if available
-    const refHeightCm = ref ? ref.avgHeight : Math.round(height);
-    const refWeightKg = ref ? ref.avgWeight : Math.round(weight);
-    const refBMIval = refWeightKg / ((refHeightCm / 100) * (refHeightCm / 100));
+    // ref values already resolved at top of showResults — compute display BMI from them
+    const refBMIval = bmi; // bmi IS the ref-based value — no recalculation needed
     const refBMILabel = window.getBMILabel(refBMIval);
 
     console.log("%c[METRICS] Ref BMI: " + refBMIval.toFixed(2) + " | Your Weight: " + Math.round(weight) + "kg", "color: #FFD700;");
@@ -254,20 +264,20 @@ async function showResults(results) {
 
     celebrate();
 
-    // Launch fitness chatbot with user's scan profile
+    // Launch fitness chatbot with user's scan profile (all values consistent)
     if (window.initChatbot) {
       window.initChatbot({
-        height: height,
+        height: refHeightCm,   // reference height for chatbot context
         weight: weight,
-        bmi: bmi,
+        bmi: bmi,              // ref-based BMI — matches metrics card
         age: age,
         gender: gender,
         tdee: tdee,
         bodyType: bodyType,
         confidence: confidence,
         diet: _lastDiet,
-        refHeight: ref ? ref.avgHeight : null,
-        refWeight: ref ? ref.avgWeight : null,
+        refHeight: refHeightCm,
+        refWeight: refWeightKg,
       });
     }
 
